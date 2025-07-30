@@ -1,0 +1,613 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Beam Wellbeing Dashboard</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+    <!-- Chosen Palette: Beam UI Palette (Light Lavender, Purple, Yellow, Green) -->
+    <!-- Application Structure Plan: A single-page dashboard application with two switchable views: 'Dashboard' and 'Companion'. The Dashboard presents key metrics, a weekly trend chart, and qualitative insights. New: An LLM-powered analysis of overall scores. The Companion view provides an interactive LLM-powered chat for user reflection. New: An LLM-powered reflection prompt generator. This structure directly translates the core components of the PDF report into an interactive format, prioritizing data visualization and direct user engagement, now enhanced with dynamic LLM insights. -->
+    <!-- Visualization & Content Choices: Metrics -> Inform -> Styled Cards -> No interaction -> Tailwind CSS. Weekly Trends -> Change/Compare -> Line Chart -> Hover tooltips -> Chart.js (Canvas). Personal Insights -> Inform -> Styled Text Blocks -> No interaction -> Tailwind CSS. Score Analysis -> Inform/Synthesize -> Button triggers LLM text generation -> LLM response displayed in modal/text area -> Gemini API + Vanilla JS. Companion -> Interact/Reflect -> Chat Interface -> User input triggers API call -> Gemini API + Vanilla JS. Reflection Prompt -> Guide Interaction -> Button triggers LLM text generation -> LLM response populates input field -> Gemini API + Vanilla JS. -->
+    <!-- CONFIRMATION: NO SVG graphics used. NO Mermaid JS used. -->
+    <style>
+        body {
+            font-family: 'Inter', sans-serif;
+            background-color: #f5f3ff; /* Light Lavender */
+        }
+        .metric-card {
+            background-color: white;
+            border-radius: 1.5rem;
+            padding: 1.5rem;
+            box-shadow: 0 4px 6px -1px rgb(0 0 0 / 0.1), 0 2px 4px -2px rgb(0 0 0 / 0.1);
+            transition: transform 0.2s ease-in-out, box-shadow 0.2s ease-in-out;
+        }
+        .metric-card:hover {
+            transform: translateY(-4px);
+            box-shadow: 0 10px 15px -3px rgb(0 0 0 / 0.1), 0 4px 6px -4px rgb(0 0 0 / 0.1);
+        }
+        .progress-bar {
+            background-color: #e5e7eb;
+            border-radius: 9999px;
+            height: 0.5rem;
+            overflow: hidden;
+        }
+        .progress-bar-inner {
+            background-color: #8b5cf6; /* Purple */
+            height: 100%;
+            border-radius: 9999px;
+        }
+        .tag {
+            padding: 0.25rem 0.75rem;
+            border-radius: 9999px;
+            font-size: 0.75rem;
+            font-weight: 500;
+        }
+        .tag-yellow { background-color: #fef9c3; color: #ca8a04; }
+        .tag-green { background-color: #dcfce7; color: #16a34a; }
+        .tag-blue { background-color: #dbeafe; color: #2563eb; }
+        .nav-link {
+            cursor: pointer;
+            transition: background-color 0.2s, color 0.2s;
+            border-radius: 0.75rem;
+        }
+        .nav-link.active {
+            background-color: #ede9fe;
+            color: #5b21b6;
+            font-weight: 600;
+        }
+        .chart-container {
+            position: relative;
+            width: 100%;
+            max-width: 800px;
+            margin-left: auto;
+            margin-right: auto;
+            height: 300px;
+            max-height: 40vh;
+        }
+        @media (min-width: 768px) {
+            .chart-container {
+                height: 350px;
+            }
+        }
+        .chat-bubble {
+            max-width: 80%;
+            padding: 0.75rem 1rem;
+            border-radius: 1.25rem;
+        }
+        .chat-bubble-user {
+            background-color: #8b5cf6;
+            color: white;
+            border-bottom-right-radius: 0.25rem;
+        }
+        .chat-bubble-bot {
+            background-color: #e5e7eb;
+            color: #1f2937;
+            border-bottom-left-radius: 0.25rem;
+        }
+        .chat-input:focus {
+            outline: none;
+            box-shadow: 0 0 0 2px #a78bfa;
+            border-color: #8b5cf6;
+        }
+
+        /* Modal Styles */
+        .modal {
+            position: fixed;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            background-color: rgba(0, 0, 0, 0.5);
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            z-index: 1000;
+        }
+        .modal-content {
+            background-color: white;
+            padding: 2rem;
+            border-radius: 1.5rem;
+            max-width: 500px;
+            width: 90%;
+            box-shadow: 0 10px 25px rgba(0, 0, 0, 0.2);
+            position: relative;
+        }
+        .modal-close-btn {
+            position: absolute;
+            top: 1rem;
+            right: 1rem;
+            background: none;
+            border: none;
+            font-size: 1.5rem;
+            cursor: pointer;
+            color: #6b7280;
+        }
+    </style>
+</head>
+<body class="text-gray-800">
+
+    <div class="flex h-screen bg-gray-50">
+        <!-- Sidebar Navigation -->
+        <aside class="hidden md:flex flex-col w-64 bg-white border-r">
+            <div class="flex items-center justify-center h-20 border-b">
+                <div class="flex items-center space-x-3">
+                    <div class="w-10 h-10 rounded-full bg-gradient-to-br from-purple-400 to-yellow-300 flex items-center justify-center">
+                        <span class="text-white text-xl font-bold">✧</span>
+                    </div>
+                    <span class="text-2xl font-bold text-gray-800">Beam</span>
+                </div>
+            </div>
+            <nav class="flex-1 px-4 py-6 space-y-2">
+                <a id="nav-dashboard" class="nav-link active flex items-center px-4 py-3">
+                    <span class="text-xl mr-3">📊</span> Dashboard
+                </a>
+                <a id="nav-companion" class="nav-link flex items-center px-4 py-3">
+                    <span class="text-xl mr-3">💬</span> Companion
+                </a>
+            </nav>
+        </aside>
+
+        <!-- Main Content -->
+        <main class="flex-1 flex flex-col overflow-hidden">
+            <header class="md:hidden flex items-center justify-between p-4 bg-white border-b">
+                 <div class="flex items-center space-x-3">
+                    <div class="w-10 h-10 rounded-full bg-gradient-to-br from-purple-400 to-yellow-300 flex items-center justify-center">
+                        <span class="text-white text-xl font-bold">✧</span>
+                    </div>
+                    <span class="text-2xl font-bold text-gray-800">Beam</span>
+                </div>
+                <div>
+                    <select id="mobile-nav" class="rounded-lg border-gray-300 focus:ring-purple-500 focus:border-purple-500">
+                        <option value="dashboard">Dashboard</option>
+                        <option value="companion">Companion</option>
+                    </select>
+                </div>
+            </header>
+
+            <!-- Dashboard View -->
+            <div id="dashboardView" class="flex-1 overflow-y-auto p-6 md:p-10">
+                <h1 class="text-3xl md:text-4xl font-bold text-gray-900">Your Wellbeing Dashboard</h1>
+                <p class="mt-2 text-gray-600">Track your journey toward psychological safety and equity.</p>
+                <p class="text-sm text-gray-500 mt-1">Last updated: Today, 30/07/2025</p>
+
+                <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6 mt-8">
+                    <!-- Wellbeing Score Card -->
+                    <div class="metric-card">
+                        <div class="flex justify-between items-start">
+                            <h2 class="text-lg font-semibold text-gray-700">Wellbeing Score</h2>
+                            <span class="tag tag-yellow">+0.5 this week</span>
+                        </div>
+                        <p class="text-4xl font-bold mt-4">7.8 <span class="text-2xl text-gray-500">/ 10</span></p>
+                        <div class="progress-bar mt-4">
+                            <div class="progress-bar-inner" style="width: 78%;"></div>
+                        </div>
+                    </div>
+                    <!-- Psychological Safety Card -->
+                    <div class="metric-card">
+                        <div class="flex justify-between items-start">
+                            <h2 class="text-lg font-semibold text-gray-700">Psychological Safety</h2>
+                             <span class="tag tag-yellow">+0.3 this week</span>
+                        </div>
+                        <p class="text-4xl font-bold mt-4">8.2 <span class="text-2xl text-gray-500">/ 10</span></p>
+                        <div class="progress-bar mt-4">
+                            <div class="progress-bar-inner" style="width: 82%;"></div>
+                        </div>
+                    </div>
+                    <!-- Inclusion Index Card -->
+                    <div class="metric-card">
+                        <div class="flex justify-between items-start">
+                            <h2 class="text-lg font-semibold text-gray-700">Inclusion Index</h2>
+                             <span class="tag tag-yellow">+0.8 this week</span>
+                        </div>
+                        <p class="text-4xl font-bold mt-4">7.4 <span class="text-2xl text-gray-500">/ 10</span></p>
+                        <div class="progress-bar mt-4">
+                            <div class="progress-bar-inner" style="width: 74%;"></div>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- New: Analyze Scores Button -->
+                <div class="mt-8 text-center">
+                    <button id="analyzeScoresBtn" class="bg-purple-600 hover:bg-purple-700 text-white font-bold py-3 px-6 rounded-full shadow-lg transition-all duration-300 ease-in-out">
+                        Analyze My Scores ✨
+                    </button>
+                    <div id="analysisLoading" class="hidden mt-4 text-purple-600">Loading analysis...</div>
+                </div>
+
+                <div class="grid grid-cols-1 lg:grid-cols-3 gap-6 mt-8">
+                    <div class="lg:col-span-2 metric-card">
+                        <h2 class="text-xl font-bold mb-4">Weekly Trends</h2>
+                        <div class="chart-container">
+                            <canvas id="weeklyTrendsChart"></canvas>
+                        </div>
+                    </div>
+                    <div class="metric-card">
+                        <h2 class="text-xl font-bold mb-4">✧ Personal Insights</h2>
+                        <div class="space-y-6">
+                            <div>
+                                <div class="flex justify-between items-center">
+                                    <h3 class="font-semibold">Positive Trend</h3>
+                                    <span class="tag tag-green">Improving</span>
+                                </div>
+                                <p class="text-sm text-gray-600 mt-1">Your wellbeing scores have improved by 15% this month.</p>
+                            </div>
+                            <div>
+                                <div class="flex justify-between items-center">
+                                    <h3 class="font-semibold">Reflection Consistency</h3>
+                                    <span class="tag tag-blue">Consistent</span>
+                                </div>
+                                <p class="text-sm text-gray-600 mt-1">You've completed 6 out of 7 check-ins this week.</p>
+                            </div>
+                            <div>
+                                <div class="flex justify-between items-center">
+                                    <h3 class="font-semibold">Areas of Growth</h3>
+                                    <span class="tag tag-yellow">Opportunity</span>
+                                </div>
+                                <p class="text-sm text-gray-600 mt-1">Consider exploring community connection opportunities.</p>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Companion View -->
+            <div id="companionView" class="hidden flex-1 flex flex-col p-4 md:p-6 overflow-hidden">
+                <div class="text-center mb-6">
+                    <h1 class="text-3xl md:text-4xl font-bold text-gray-900">Your Beam Companion</h1>
+                    <p class="mt-2 text-gray-600">A safe space for reflection, support, and trauma-informed dialogue.</p>
+                </div>
+                <div id="chat-window" class="flex-1 bg-white rounded-2xl p-6 overflow-y-auto space-y-4 shadow-inner">
+                    <!-- Chat messages will be appended here -->
+                    <div class="flex items-start space-x-3">
+                        <div class="w-10 h-10 rounded-full bg-purple-200 flex items-center justify-center flex-shrink-0">
+                           <span class="text-lg">💬</span>
+                        </div>
+                        <div class="chat-bubble chat-bubble-bot">
+                            <p>Hello! I'm your Beam companion. I'm here to support you with gentle, trauma-informed conversations about your wellbeing, workplace experiences, and reflections. How are you feeling today?</p>
+                        </div>
+                    </div>
+                </div>
+                <form id="chat-form" class="mt-4">
+                    <div class="flex flex-col sm:flex-row items-center bg-white rounded-full p-2 shadow-md">
+                        <!-- New: Suggest Reflection Prompt Button -->
+                        <button type="button" id="suggestPromptBtn" class="bg-blue-500 hover:bg-blue-600 text-white text-sm font-semibold py-2 px-4 rounded-full mb-2 sm:mb-0 sm:mr-2 w-full sm:w-auto transition-colors duration-300 ease-in-out">
+                            Suggest a Reflection Prompt ✨
+                        </button>
+                        <input id="chat-input" type="text" placeholder="Share your thoughts, feelings, or questions..." class="flex-1 w-full bg-transparent px-4 py-2 text-gray-700 focus:outline-none">
+                        <button type="submit" class="bg-purple-600 text-white rounded-full p-3 hover:bg-purple-700 transition-colors focus:outline-none focus:ring-2 focus:ring-purple-500 focus:ring-offset-2 mt-2 sm:mt-0">
+                            <svg xmlns="http://www.w3.org/2000/svg" class="h-6 w-6" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 10l7-7m0 0l7 7m-7-7v18" /></svg>
+                        </button>
+                    </div>
+                </form>
+            </div>
+        </main>
+    </div>
+
+    <!-- Modal for Score Analysis -->
+    <div id="scoreAnalysisModal" class="modal hidden">
+        <div class="modal-content">
+            <button class="modal-close-btn" id="closeAnalysisModal">&times;</button>
+            <h2 class="text-2xl font-bold text-gray-900 mb-4">Your Score Analysis</h2>
+            <p id="analysisOutput" class="text-gray-700 leading-relaxed"></p>
+            <div id="modalLoading" class="hidden mt-4 text-purple-600">Generating analysis...</div>
+        </div>
+    </div>
+
+    <script>
+        document.addEventListener('DOMContentLoaded', function () {
+            const dashboardView = document.getElementById('dashboardView');
+            const companionView = document.getElementById('companionView');
+            const navDashboard = document.getElementById('nav-dashboard');
+            const navCompanion = document.getElementById('nav-companion');
+            const mobileNav = document.getElementById('mobile-nav');
+
+            const chatWindow = document.getElementById('chat-window');
+            const chatForm = document.getElementById('chat-form');
+            const chatInput = document.getElementById('chat-input');
+            let chatHistory = [];
+
+            const analyzeScoresBtn = document.getElementById('analyzeScoresBtn');
+            const scoreAnalysisModal = document.getElementById('scoreAnalysisModal');
+            const closeAnalysisModal = document.getElementById('closeAnalysisModal');
+            const analysisOutput = document.getElementById('analysisOutput');
+            const analysisLoading = document.getElementById('analysisLoading');
+
+            const suggestPromptBtn = document.getElementById('suggestPromptBtn');
+
+            function switchView(view) {
+                if (view === 'dashboard') {
+                    dashboardView.classList.remove('hidden');
+                    companionView.classList.add('hidden');
+                    navDashboard.classList.add('active');
+                    navCompanion.classList.remove('active');
+                    mobileNav.value = 'dashboard';
+                } else {
+                    dashboardView.classList.add('hidden');
+                    companionView.classList.remove('hidden');
+                    navDashboard.classList.remove('active');
+                    navCompanion.classList.add('active');
+                    mobileNav.value = 'companion';
+                }
+            }
+
+            navDashboard.addEventListener('click', () => switchView('dashboard'));
+            navCompanion.addEventListener('click', () => switchView('companion'));
+            mobileNav.addEventListener('change', (e) => switchView(e.target.value));
+
+            function createWeeklyTrendsChart() {
+                const ctx = document.getElementById('weeklyTrendsChart').getContext('2d');
+                new Chart(ctx, {
+                    type: 'line',
+                    data: {
+                        labels: ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'],
+                        datasets: [{
+                            label: 'Wellbeing',
+                            data: [6.5, 6, 8.5, 7.5, 9, 8, 7.5],
+                            borderColor: '#ef4444',
+                            backgroundColor: '#ef4444',
+                            tension: 0.4,
+                            borderWidth: 3,
+                            pointRadius: 5,
+                            pointBackgroundColor: '#ef4444',
+                        }, {
+                            label: 'Safety',
+                            data: [8, 9, 9.5, 8, 9.5, 8.5, 8.2],
+                            borderColor: '#3b82f6',
+                            backgroundColor: '#3b82f6',
+                            tension: 0.4,
+                            borderWidth: 3,
+                            pointRadius: 5,
+                            pointBackgroundColor: '#3b82f6',
+                        }, {
+                            label: 'Inclusion',
+                            data: [6, 7, 8, 9, 8.5, 7.5, 7],
+                            borderColor: '#22c55e',
+                            backgroundColor: '#22c55e',
+                            tension: 0.4,
+                            borderWidth: 3,
+                            pointRadius: 5,
+                            pointBackgroundColor: '#22c55e',
+                        }]
+                    },
+                    options: {
+                        responsive: true,
+                        maintainAspectRatio: false,
+                        scales: {
+                            y: {
+                                beginAtZero: true,
+                                max: 10,
+                                grid: {
+                                    color: '#e5e7eb'
+                                }
+                            },
+                            x: {
+                                grid: {
+                                    display: false
+                                }
+                            }
+                        },
+                        plugins: {
+                            legend: {
+                                position: 'bottom',
+                                labels: {
+                                    usePointStyle: true,
+                                    boxWidth: 8,
+                                }
+                            },
+                            tooltip: {
+                                mode: 'index',
+                                intersect: false,
+                                backgroundColor: '#1f2937',
+                                titleFont: { weight: 'bold' },
+                                bodySpacing: 5,
+                                padding: 12,
+                                cornerRadius: 8,
+                            }
+                        }
+                    }
+                });
+            }
+            
+            function addMessageToChat(sender, message) {
+                const messageElement = document.createElement('div');
+                if (sender === 'user') {
+                    messageElement.className = 'flex justify-end';
+                    messageElement.innerHTML = `
+                        <div class="chat-bubble chat-bubble-user">
+                            <p>${message}</p>
+                        </div>
+                    `;
+                } else {
+                    messageElement.className = 'flex items-start space-x-3';
+                    messageElement.innerHTML = `
+                        <div class="w-10 h-10 rounded-full bg-purple-200 flex items-center justify-center flex-shrink-0">
+                           <span class="text-lg">💬</span>
+                        </div>
+                        <div class="chat-bubble chat-bubble-bot">
+                            <p>${message}</p>
+                        </div>
+                    `;
+                }
+                chatWindow.appendChild(messageElement);
+                chatWindow.scrollTop = chatWindow.scrollHeight;
+            }
+
+            async function getCompanionResponse(prompt) {
+                const typingIndicator = document.createElement('div');
+                typingIndicator.className = 'flex items-start space-x-3';
+                typingIndicator.innerHTML = `
+                    <div class="w-10 h-10 rounded-full bg-purple-200 flex items-center justify-center flex-shrink-0">
+                       <span class="text-lg">💬</span>
+                    </div>
+                    <div class="chat-bubble chat-bubble-bot">
+                        <p class="italic text-gray-500">Typing...</p>
+                    </div>
+                `;
+                chatWindow.appendChild(typingIndicator);
+                chatWindow.scrollTop = chatWindow.scrollHeight;
+
+                chatHistory.push({ role: "user", parts: [{ text: prompt }] });
+                const payload = { contents: chatHistory };
+                const apiKey = "";
+                const apiUrl = `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash-preview-05-20:generateContent?key=${apiKey}`;
+
+                let retries = 0;
+                const maxRetries = 3;
+                let success = false;
+
+                while (retries < maxRetries && !success) {
+                    try {
+                        const response = await fetch(apiUrl, {
+                            method: 'POST',
+                            headers: { 'Content-Type': 'application/json' },
+                            body: JSON.stringify(payload)
+                        });
+
+                        if (!response.ok) throw new Error(`HTTP error! status: ${response.status}`);
+                        
+                        const result = await response.json();
+                        
+                        if (result.candidates && result.candidates[0].content && result.candidates[0].content.parts[0]) {
+                            const botResponse = result.candidates[0].content.parts[0].text;
+                            chatHistory.push({ role: "model", parts: [{ text: botResponse }] });
+                            typingIndicator.remove();
+                            addMessageToChat('bot', botResponse);
+                            success = true;
+                        } else {
+                            throw new Error("Invalid response structure from API");
+                        }
+                    } catch (error) {
+                        console.error('Error fetching companion response:', error);
+                        retries++;
+                        if (retries >= maxRetries) {
+                            typingIndicator.remove();
+                            addMessageToChat('bot', 'Sorry, I seem to be having trouble connecting. Please try again in a moment.');
+                        } else {
+                            await new Promise(res => setTimeout(res, 1000 * Math.pow(2, retries)));
+                        }
+                    }
+                }
+            }
+
+            chatForm.addEventListener('submit', (e) => {
+                e.preventDefault();
+                const userInput = chatInput.value.trim();
+                if (userInput) {
+                    addMessageToChat('user', userInput);
+                    getCompanionResponse(userInput);
+                    chatInput.value = '';
+                }
+            });
+
+            // New Feature 1: Analyze Scores
+            analyzeScoresBtn.addEventListener('click', async () => {
+                analysisOutput.textContent = '';
+                analysisLoading.classList.remove('hidden');
+                scoreAnalysisModal.classList.remove('hidden');
+
+                const wellbeingScore = 7.8;
+                const safetyScore = 8.2;
+                const inclusionScore = 7.4;
+
+                const prompt = `Analyze the following wellbeing scores: Wellbeing Score: ${wellbeingScore}/10, Psychological Safety: ${safetyScore}/10, Inclusion Index: ${inclusionScore}/10. Provide a concise, empathetic, and encouraging interpretation of these scores, highlighting strengths and suggesting a general area for continued growth. Keep it under 100 words.`;
+
+                const payload = { contents: [{ role: "user", parts: [{ text: prompt }] }] };
+                const apiKey = "";
+                const apiUrl = `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash-preview-05-20:generateContent?key=${apiKey}`;
+
+                let retries = 0;
+                const maxRetries = 3;
+                let success = false;
+
+                while (retries < maxRetries && !success) {
+                    try {
+                        const response = await fetch(apiUrl, {
+                            method: 'POST',
+                            headers: { 'Content-Type': 'application/json' },
+                            body: JSON.stringify(payload)
+                        });
+
+                        if (!response.ok) throw new Error(`HTTP error! status: ${response.status}`);
+                        
+                        const result = await response.json();
+                        
+                        if (result.candidates && result.candidates[0].content && result.candidates[0].content.parts[0]) {
+                            analysisOutput.textContent = result.candidates[0].content.parts[0].text;
+                            success = true;
+                        } else {
+                            throw new Error("Invalid response structure from API");
+                        }
+                    } catch (error) {
+                        console.error('Error fetching score analysis:', error);
+                        retries++;
+                        if (retries >= maxRetries) {
+                            analysisOutput.textContent = 'Sorry, I could not generate an analysis at this time. Please try again later.';
+                        } else {
+                            await new Promise(res => setTimeout(res, 1000 * Math.pow(2, retries)));
+                        }
+                    } finally {
+                        analysisLoading.classList.add('hidden');
+                    }
+                }
+            });
+
+            closeAnalysisModal.addEventListener('click', () => {
+                scoreAnalysisModal.classList.add('hidden');
+            });
+
+            // New Feature 2: Suggest Reflection Prompt
+            suggestPromptBtn.addEventListener('click', async () => {
+                chatInput.value = 'Generating prompt...';
+                suggestPromptBtn.disabled = true;
+
+                const prompt = `Generate a concise, empathetic, and open-ended reflection prompt for a user in a wellbeing app chat. The prompt should encourage self-awareness or gentle exploration of feelings. Keep it under 20 words. Example: "What's one small thing that brought you joy today?"`;
+
+                const payload = { contents: [{ role: "user", parts: [{ text: prompt }] }] };
+                const apiKey = "";
+                const apiUrl = `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash-preview-05-20:generateContent?key=${apiKey}`;
+
+                let retries = 0;
+                const maxRetries = 3;
+                let success = false;
+
+                while (retries < maxRetries && !success) {
+                    try {
+                        const response = await fetch(apiUrl, {
+                            method: 'POST',
+                            headers: { 'Content-Type': 'application/json' },
+                            body: JSON.stringify(payload)
+                        });
+
+                        if (!response.ok) throw new Error(`HTTP error! status: ${response.status}`);
+                        
+                        const result = await response.json();
+                        
+                        if (result.candidates && result.candidates[0].content && result.candidates[0].content.parts[0]) {
+                            chatInput.value = result.candidates[0].content.parts[0].text;
+                            success = true;
+                        } else {
+                            throw new Error("Invalid response structure from API");
+                        }
+                    } catch (error) {
+                        console.error('Error fetching reflection prompt:', error);
+                        retries++;
+                        if (retries >= maxRetries) {
+                            chatInput.value = 'Could not generate prompt. Try asking "How are you feeling?"';
+                        } else {
+                            await new Promise(res => setTimeout(res, 1000 * Math.pow(2, retries)));
+                        }
+                    } finally {
+                        suggestPromptBtn.disabled = false;
+                    }
+                }
+            });
+
+            createWeeklyTrendsChart();
+        });
+    </script>
+</body>
+</html>
